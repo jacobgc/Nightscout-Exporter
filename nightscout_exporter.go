@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/log"
 )
 
 const (
@@ -19,14 +20,17 @@ const (
 var (
 	listenAddress = flag.String("telemetry.address", ":9552", "Address on which to expose metrics.")
 	metricsPath   = flag.String("telemetry.endpoint", "/metrics", "Path under which to expose metrics.")
-	nightscoutUrl = flag.String("nightscout_endpoint", "https://foo.azurewebsites.net/pebble?count=2&units=mmol", "Nightscout url to jsondata, only mmol is supported")
+	nightscoutUrl = flag.String("nightscout.endpoint", "", "Nightscout url to jsondata, only mmol is supported")
 )
 
 // Exporter collects nightscout stats from machine of a specified user and exports them using
 // the prometheus metrics package.
 type Exporter struct {
-	mutex            sync.RWMutex
-	statusNightscout *prometheus.GaugeVec
+	mutex                sync.RWMutex
+	sgvStatusGauge       *prometheus.GaugeVec
+	trendStatusGauge     *prometheus.GaugeVec
+	directionStatusGauge *prometheus.GaugeVec
+	bgdeltaStatusGauge   *prometheus.GaugeVec
 }
 
 type NightscoutPebble struct {
@@ -44,8 +48,7 @@ type NightscoutPebble struct {
 }
 
 func getJson(url string) NightscoutPebble {
-	//fmt.Println("fetching body from url", url)
-	r, err := http.Get(url)
+	r, err := http.Get(url + "/pebble?count=1&units=mmol")
 	if err != nil {
 		fmt.Println("got error1", err.Error())
 	}
@@ -65,12 +68,24 @@ func getJson(url string) NightscoutPebble {
 func NewNightscoutCheckerExporter() *Exporter {
 
 	return &Exporter{
-
-		statusNightscout: prometheus.NewGaugeVec(
+		mutex: sync.RWMutex{},
+		sgvStatusGauge: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Namespace: "nightscout",
-				Name:      "nightscout_pebble",
-				Help:      "checks current blood sugar from url",
+				Namespace: namespace,
+				Name:      "sgv",
+				Help:      "The current sgv",
+			}, []string{"glucosetype", "url"}),
+		trendStatusGauge: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "trend",
+				Help:      "The current trend enum",
+			}, []string{"glucosetype", "url"}),
+		bgdeltaStatusGauge: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "background_delta",
+				Help:      "The current background delta in mmol",
 			}, []string{"glucosetype", "url"}),
 	}
 
@@ -79,18 +94,21 @@ func NewNightscoutCheckerExporter() *Exporter {
 // Describe describes all the metrics ever exported by the nightscout exporter. It
 // implements prometheus.Collector.
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
-	e.statusNightscout.Describe(ch)
+	e.sgvStatusGauge.Describe(ch)
+	e.trendStatusGauge.Describe(ch)
+	e.bgdeltaStatusGauge.Describe(ch)
 }
 
 func (e *Exporter) scrape(ch chan<- prometheus.Metric) error {
-	e.statusNightscout.Reset()
+	e.sgvStatusGauge.Reset()
 
 	data := getJson(*nightscoutUrl)
-
-	fmt.Println("trying to convert to float:", data.Bgs[0].Sgv)
 	glucose, _ := strconv.ParseFloat(data.Bgs[0].Sgv, 64)
+	bgdelta, _ := strconv.ParseFloat(data.Bgs[0].Bgdelta, 64)
 
-	e.statusNightscout.With(prometheus.Labels{"glucosetype": "mmol", "url": *nightscoutUrl}).Set(float64(glucose))
+	e.sgvStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": *nightscoutUrl}).Set(glucose)
+	e.trendStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": *nightscoutUrl}).Set(float64(data.Bgs[0].Trend))
+	e.bgdeltaStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": *nightscoutUrl}).Set(bgdelta)
 
 	return nil
 }
@@ -104,7 +122,9 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 		log.Printf("Error scraping nightscout url: %s", err)
 	}
 
-	e.statusNightscout.Collect(ch)
+	e.sgvStatusGauge.Collect(ch)
+	e.trendStatusGauge.Collect(ch)
+	e.bgdeltaStatusGauge.Collect(ch)
 
 	return
 }
@@ -115,7 +135,7 @@ func main() {
 
 	exporter := NewNightscoutCheckerExporter()
 	prometheus.MustRegister(exporter)
-	http.Handle(*metricsPath, prometheus.Handler())
+	http.Handle(*metricsPath, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
                 <head><title>Nightscout exporter</title></head>
@@ -126,6 +146,6 @@ func main() {
                 </html>
               `))
 	})
-	log.Infof("Starting Server: %s", *listenAddress)
+	println("Starting Server: ", *listenAddress)
 	log.Fatal(http.ListenAndServe(*listenAddress, nil))
 }
