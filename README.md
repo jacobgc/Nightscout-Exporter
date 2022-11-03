@@ -8,10 +8,10 @@ Exports numerical values exported by the `/pebble` nightscout api
 * trend
 * bgdelta
 
-## Params
-* `telemetry.address` - binding address (default: `:9552`)
-* `telemetry.endpoint` - prometheus metrics endpoint (default: `/metrics`)
-* `nightscout.endpoint` - nightscout url (default: `nil`, example: `https://XXXXX-XXXXX-XXXXX.herokuapp.com`)
+## Environment Variables
+* `TELEMETRY_ADDRESS` - binding address (default: `:9552`)
+* `TELEMETRY_ENDPOINT` - prometheus metrics endpoint (default: `/metrics`)
+* `NIGHTSCOUT_ENDPOINT` - nightscout url (default: `nil`, example: `https://XXXXX-XXXXX-XXXXX.herokuapp.com`)
 
 ## TODO
 * Add proper logging
