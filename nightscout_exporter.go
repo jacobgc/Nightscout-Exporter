@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 
@@ -14,13 +14,10 @@ import (
 )
 
 const (
-	namespace = "nightscout" // For Prometheus metrics.
-)
-
-var (
-	listenAddress = flag.String("telemetry.address", ":9552", "Address on which to expose metrics.")
-	metricsPath   = flag.String("telemetry.endpoint", "/metrics", "Path under which to expose metrics.")
-	nightscoutUrl = flag.String("nightscout.endpoint", "", "Nightscout url to jsondata, only mmol is supported")
+	namespace                 = "nightscout" // For Prometheus metrics.
+	defaultAddress            = ":9552"
+	defaultTelemetryEndpoint  = "/metrics"
+	defaultNightscoutEndpoint = ""
 )
 
 // Exporter collects nightscout stats from machine of a specified user and exports them using
@@ -31,6 +28,7 @@ type Exporter struct {
 	trendStatusGauge     *prometheus.GaugeVec
 	directionStatusGauge *prometheus.GaugeVec
 	bgdeltaStatusGauge   *prometheus.GaugeVec
+	nightscoutAddress    string
 }
 
 type NightscoutPebble struct {
@@ -102,13 +100,13 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 func (e *Exporter) scrape(ch chan<- prometheus.Metric) error {
 	e.sgvStatusGauge.Reset()
 
-	data := getJson(*nightscoutUrl)
+	data := getJson(e.nightscoutAddress)
 	glucose, _ := strconv.ParseFloat(data.Bgs[0].Sgv, 64)
 	bgdelta, _ := strconv.ParseFloat(data.Bgs[0].Bgdelta, 64)
 
-	e.sgvStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": *nightscoutUrl}).Set(glucose)
-	e.trendStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": *nightscoutUrl}).Set(float64(data.Bgs[0].Trend))
-	e.bgdeltaStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": *nightscoutUrl}).Set(bgdelta)
+	e.sgvStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": e.nightscoutAddress}).Set(glucose)
+	e.trendStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": e.nightscoutAddress}).Set(float64(data.Bgs[0].Trend))
+	e.bgdeltaStatusGauge.With(prometheus.Labels{"glucosetype": "mmol", "url": e.nightscoutAddress}).Set(bgdelta)
 
 	return nil
 }
@@ -130,22 +128,49 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 }
 
 func main() {
+	metricsPath := ""
+	listenAddress := ""
+	nightscoutAddress := ""
 
-	flag.Parse()
+	val, ok := os.LookupEnv("TELEMETRY_ADDRESS")
+	if ok {
+		listenAddress = val
+	} else {
+		listenAddress = defaultAddress
+	}
+
+	val, ok = os.LookupEnv("TELEMETRY_ENDPOINT")
+	if ok {
+		metricsPath = val
+	} else {
+		metricsPath = defaultTelemetryEndpoint
+	}
+
+	val, ok = os.LookupEnv("NIGHTSCOUT_ENDPOINT")
+	if ok {
+		nightscoutAddress = val
+	} else {
+		nightscoutAddress = defaultNightscoutEndpoint
+	}
+
+	if nightscoutAddress == "" {
+		log.Fatal("NIGHTSCOUT_ENDPOINT NOT SET")
+	}
 
 	exporter := NewNightscoutCheckerExporter()
+	exporter.nightscoutAddress = nightscoutAddress
 	prometheus.MustRegister(exporter)
-	http.Handle(*metricsPath, promhttp.Handler())
+	http.Handle(metricsPath, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
                 <head><title>Nightscout exporter</title></head>
                 <body>
                    <h1>nightscout exporter</h1>
-                   <p><a href='` + *metricsPath + `'>Metrics</a></p>
+                   <p><a href='` + metricsPath + `'>Metrics</a></p>
                    </body>
                 </html>
               `))
 	})
-	println("Starting Server: ", *listenAddress)
-	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+	println("Starting Server: ", listenAddress)
+	log.Fatal(http.ListenAndServe(listenAddress, nil))
 }
