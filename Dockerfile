@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+LABEL org.opencontainers.image.source=https://github.com/jacobgc/Nightscout-Exporter
 
 FROM golang:1.19-alpine AS build
 
