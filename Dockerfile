@@ -1,6 +1,4 @@
 # syntax=docker/dockerfile:1
-LABEL org.opencontainers.image.source=https://github.com/jacobgc/Nightscout-Exporter
-
 FROM golang:1.19-alpine AS build
 
 WORKDIR /app
@@ -14,9 +12,13 @@ RUN go build -o ./nightscout_exporter
 
 FROM alpine:latest
 
+LABEL org.opencontainers.image.source=https://github.com/jacobgc/Nightscout-Exporter
+
 ENV TELEMETRY_ADDRESS ":9552"
 ENV TELEMETRY_ENDPOINT "/metrics"
 ENV NIGHTSCOUT_ENDPOINT ""
+ENV NIGHTSCOUT_TOKEN ""
+ENV BLOOD_GLUCOSE_STANDARD "UK"
 
 WORKDIR /app
 
